@@ -72,6 +72,7 @@ class Vsd2Client(
     private var isEncryptedSession = false
     private var activeDeviceID: String? = null
     private var isDeviceSetupDone = false
+    private val activeActions = java.util.concurrent.ConcurrentHashMap<Int, Messages.Action>()
 
     fun switchTargetDevice(newDeviceName: String, config: DeckConfig? = null) {
         val clean = newDeviceName.trim().ifEmpty { "Mash Stream Deck" }
@@ -304,28 +305,93 @@ class Vsd2Client(
                     _currentPage.value = cur
                     _totalPages.value = tot
 
-                    // When page changes, remove buttons that are not present on the new page
+                    // When page changes, clear and repopulate active actions and retain only current bitmaps
+                    activeActions.clear()
                     if (ctx.actionsCount > 0) {
+                        for (act in ctx.actionsList) {
+                            activeActions[act.index] = act
+                        }
                         val activeIndices = ctx.actionsList.map { it.index }.toSet()
                         scope.launch(Dispatchers.Main) {
                             val map = _buttonBitmaps.value.toMutableMap()
                             map.keys.retainAll(activeIndices)
                             _buttonBitmaps.value = map
                         }
+                    } else {
+                        scope.launch(Dispatchers.Main) {
+                            _buttonBitmaps.value = emptyMap()
+                        }
                     }
                 }
 
                 Messages.ServerMessage.PayloadCase.CONTEXTUPDATE -> {
                     val update = serverMessage.contextUpdate
-                    Log.d(tag, "Received ContextUpdate profile=${update.profileID}: removeCount=${update.removeCount}")
-                    if (update.removeCount > 0) {
-                        scope.launch(Dispatchers.Main) {
-                            val map = _buttonBitmaps.value.toMutableMap()
-                            for (idx in update.removeList) {
-                                map.remove(idx)
-                            }
-                            _buttonBitmaps.value = map
+                    Log.d(tag, "Received ContextUpdate profile=${update.profileID}: removeCount=${update.removeCount}, replaceCount=${update.replaceCount}")
+
+                    scope.launch(Dispatchers.Main) {
+                        val map = _buttonBitmaps.value.toMutableMap()
+                        val stashedBitmaps = mutableMapOf<Int, Bitmap>()
+                        val stashedActions = mutableMapOf<Int, Messages.Action>()
+
+                        // 1. Stash removed items to preserve icons during button move/drag
+                        for (idx in update.removeList) {
+                            map.remove(idx)?.let { stashedBitmaps[idx] = it }
+                            activeActions.remove(idx)?.let { stashedActions[idx] = it }
                         }
+
+                        // 2. Process replaced or moved actions
+                        if (update.replaceCount > 0) {
+                            val unassignedReplaces = mutableListOf<Messages.Action>()
+
+                            for (action in update.replaceList) {
+                                val newIdx = action.index
+                                var matchedOldIdx: Int? = null
+
+                                // Try to match by shortcutID first
+                                if (action.hasShortcutID() && action.shortcutID.isNotEmpty()) {
+                                    matchedOldIdx = stashedActions.entries.firstOrNull {
+                                        it.value.hasShortcutID() && it.value.shortcutID == action.shortcutID
+                                    }?.key
+                                }
+
+                                // If not found, match by name, title, and category
+                                if (matchedOldIdx == null) {
+                                    matchedOldIdx = stashedActions.entries.firstOrNull {
+                                        it.value.name == action.name && it.value.title == action.title && it.value.category == action.category
+                                    }?.key
+                                }
+
+                                // If still not found and exactly 1 moved, it's a 1-to-1 move
+                                if (matchedOldIdx == null && stashedActions.size == 1 && update.replaceCount == 1) {
+                                    matchedOldIdx = stashedActions.keys.first()
+                                }
+
+                                if (matchedOldIdx != null) {
+                                    stashedBitmaps.remove(matchedOldIdx)?.let {
+                                        map[newIdx] = it
+                                    }
+                                    stashedActions.remove(matchedOldIdx)
+                                    activeActions[newIdx] = action
+                                } else {
+                                    unassignedReplaces.add(action)
+                                }
+                            }
+
+                            // Fallback for any remaining unassigned replaces
+                            for (action in unassignedReplaces) {
+                                val newIdx = action.index
+                                if (stashedBitmaps.isNotEmpty()) {
+                                    val fallbackOldIdx = stashedBitmaps.keys.first()
+                                    stashedBitmaps.remove(fallbackOldIdx)?.let {
+                                        map[newIdx] = it
+                                    }
+                                    stashedActions.remove(fallbackOldIdx)
+                                }
+                                activeActions[newIdx] = action
+                            }
+                        }
+
+                        _buttonBitmaps.value = map
                     }
                 }
 
@@ -475,6 +541,7 @@ class Vsd2Client(
         } catch (_: Exception) {}
         _connectionState.value = ConnectionState.DISCONNECTED
         _buttonBitmaps.value = emptyMap()
+        activeActions.clear()
         _fingerprint.value = null
         _currentPage.value = 1
         _totalPages.value = 1
