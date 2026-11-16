@@ -112,28 +112,40 @@ class Vsd2Client(
 
         val request = Request.Builder().url(url).build()
 
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
+        var currentWs: WebSocket? = null
+        currentWs = client.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(ws: WebSocket, response: Response) {
+                if (ws != webSocket) return
                 Log.d(tag, "WebSocket handshake succeeded! Sending HelloFromClient...")
                 sendHello()
             }
 
-            override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
+            override fun onMessage(ws: WebSocket, bytes: okio.ByteString) {
+                if (ws != webSocket) return
                 handleIncomingBytes(bytes.toByteArray(), config)
             }
 
-            override fun onMessage(webSocket: WebSocket, text: String) {
+            override fun onMessage(ws: WebSocket, text: String) {
+                if (ws != webSocket) return
                 Log.d(tag, "Incoming text message: $text")
             }
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                if (ws != webSocket) {
+                    Log.d(tag, "Ignoring onFailure from stale WebSocket: ${t.message}")
+                    return
+                }
                 val msg = t.localizedMessage ?: t.message ?: "Gagal terhubung ke host"
                 Log.e(tag, "WebSocket connection failure: $msg", t)
                 _connectionState.value = ConnectionState.ERROR
                 _errorMessage.value = msg
             }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                if (ws != webSocket) {
+                    Log.d(tag, "Ignoring onClosed from stale WebSocket")
+                    return
+                }
                 Log.w(tag, "WebSocket closed by peer: code=$code, reason=$reason")
                 _connectionState.value = ConnectionState.DISCONNECTED
                 if (code != 1000) {
@@ -141,6 +153,7 @@ class Vsd2Client(
                 }
             }
         })
+        webSocket = currentWs
     }
 
     private fun sendHello() {
@@ -454,8 +467,12 @@ class Vsd2Client(
     }
 
     fun disconnect() {
-        webSocket?.close(1000, "User disconnected")
+        val oldWs = webSocket
         webSocket = null
+        try {
+            oldWs?.cancel()
+            oldWs?.close(1000, "User disconnected")
+        } catch (_: Exception) {}
         _connectionState.value = ConnectionState.DISCONNECTED
         _buttonBitmaps.value = emptyMap()
         _fingerprint.value = null
@@ -463,5 +480,6 @@ class Vsd2Client(
         _totalPages.value = 1
         isAuthenticated = false
         isEncryptedSession = false
+        isDeviceSetupDone = false
     }
 }

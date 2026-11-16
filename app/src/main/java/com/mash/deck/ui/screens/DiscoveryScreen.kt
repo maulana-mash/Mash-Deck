@@ -50,7 +50,7 @@ fun DiscoveryScreen(
     activeProfileName: String = "Mash Stream Deck"
 ) {
     var isManualExpanded by remember { mutableStateOf(false) }
-    var manualHost by remember(savedServer) { mutableStateOf(savedServer?.host ?: "10.214.158.2") }
+    var manualHost by remember(savedServer) { mutableStateOf(savedServer?.host ?: "10.212.98.23") }
     var manualPort by remember(savedServer) { mutableStateOf(savedServer?.port?.toString() ?: "28198") }
 
     Surface(

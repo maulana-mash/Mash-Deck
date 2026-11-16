@@ -42,11 +42,6 @@ class MdnsDiscovery(
             }
         }
 
-        // Also probe common fallback if different
-        if (savedHost != "10.214.158.2") {
-            probeDirectServer("10.214.158.2", 28198, "MASH-OLED23")
-        }
-
         // 2. Start mDNS multicast listener
         try {
             multicastLock = wifiManager?.createMulticastLock("MashDeckMdns")?.apply {
