@@ -13,8 +13,8 @@ android {
         applicationId = "com.mash.deck"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.3"
+        versionCode = 3
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

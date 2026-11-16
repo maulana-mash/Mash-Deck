@@ -2,6 +2,7 @@ package com.mash.deck.network
 
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import com.elgato.vsd2.Messages
 import com.google.protobuf.ByteString
@@ -10,6 +11,8 @@ import com.mash.deck.crypto.CryptoBox
 import com.mash.deck.model.DeckConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +20,60 @@ import kotlinx.coroutines.launch
 import okhttp3.*
 import okio.ByteString.Companion.toByteString
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+
+data class ActionMetadata(
+    val index: Int,
+    val title: String,
+    val name: String,
+    val category: String,
+    val shortcutId: String?
+) {
+    val compositeSignature: String
+        get() = "$category\u0000$name\u0000$title"
+
+    val typeSignature: String
+        get() = "$category\u0000$name"
+
+    companion object {
+        fun fromProto(proto: Messages.Action): ActionMetadata {
+            val cleanShortcutId = if (proto.hasShortcutID()) {
+                proto.shortcutID.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+            return ActionMetadata(
+                index = proto.index,
+                title = proto.title.orEmpty(),
+                name = proto.name.orEmpty(),
+                category = proto.category.orEmpty(),
+                shortcutId = cleanShortcutId
+            )
+        }
+    }
+}
+
+data class DeckSlotState(
+    val index: Int,
+    val action: ActionMetadata,
+    val bitmap: Bitmap? = null,
+    val lastUpdatedMs: Long = SystemClock.elapsedRealtime()
+)
+
+private data class StashedEntry(
+    val profileId: String,
+    val originIndex: Int,
+    val action: ActionMetadata,
+    val bitmap: Bitmap?,
+    val stashedAtMs: Long,
+    val evictedInCurrentBatch: Boolean = false
+)
+
+private data class OrphanIcon(
+    val bitmap: Bitmap,
+    val receivedAtMs: Long
+)
 
 enum class ConnectionState {
     DISCONNECTED,
@@ -72,7 +129,18 @@ class Vsd2Client(
     private var isEncryptedSession = false
     private var activeDeviceID: String? = null
     private var isDeviceSetupDone = false
-    private val activeActions = java.util.concurrent.ConcurrentHashMap<Int, Messages.Action>()
+
+    private val stashTtlMs: Long = 750L
+    private val stateLock = ReentrantLock()
+    private var cleanupJob: Job? = null
+
+    private var currentProfileId: String = ""
+    private var currentPageIndex: Int = 0
+    private var totalPagesCount: Int = 1
+
+    private val activeSlots = mutableMapOf<Int, DeckSlotState>()
+    private val transientStash = ArrayDeque<StashedEntry>()
+    private val orphanIcons = mutableMapOf<Int, OrphanIcon>()
 
     fun switchTargetDevice(newDeviceName: String, config: DeckConfig? = null) {
         val clean = newDeviceName.trim().ifEmpty { "Mash Stream Deck" }
@@ -287,111 +355,152 @@ class Vsd2Client(
                     val icon = serverMessage.icon
                     val bitmap = ImageDecoder.decodeImage(icon.image)
                     if (bitmap != null) {
-                        scope.launch(Dispatchers.Main) {
-                            val map = _buttonBitmaps.value.toMutableMap()
-                            map[icon.index] = bitmap
-                            _buttonBitmaps.value = map
+                        val slotIndex = icon.index
+                        stateLock.withLock {
+                            val now = SystemClock.elapsedRealtime()
+                            pruneExpiredLocked(now)
+
+                            val existingSlot = activeSlots[slotIndex]
+                            if (existingSlot != null) {
+                                activeSlots[slotIndex] = existingSlot.copy(
+                                    bitmap = bitmap,
+                                    lastUpdatedMs = now
+                                )
+                                publishStateLocked()
+                            } else {
+                                orphanIcons[slotIndex] = OrphanIcon(
+                                    bitmap = bitmap,
+                                    receivedAtMs = now
+                                )
+                                scheduleStashCleanupLocked()
+                            }
                         }
                     }
                 }
 
                 Messages.ServerMessage.PayloadCase.CONTEXT -> {
                     val ctx = serverMessage.context
-                    val rawPage = ctx.currentPage
-                    val tot = if (ctx.totalPages > 0) ctx.totalPages else 1
-                    // Stream Deck protobuf uses 0-based indexing for currentPage (0 = Page 1, 1 = Page 2, etc.)
-                    val cur = (rawPage + 1).coerceIn(1, tot)
-                    Log.d(tag, "Received Context profile=${ctx.profileID}: page $cur of $tot (raw page=$rawPage, actions=${ctx.actionsCount})")
-                    _currentPage.value = cur
-                    _totalPages.value = tot
+                    stateLock.withLock {
+                        val now = SystemClock.elapsedRealtime()
+                        val isSamePageRefresh = (ctx.profileID == currentProfileId &&
+                                ctx.currentPage == currentPageIndex)
 
-                    // When page changes, clear and repopulate active actions and retain only current bitmaps
-                    activeActions.clear()
-                    if (ctx.actionsCount > 0) {
-                        for (act in ctx.actionsList) {
-                            activeActions[act.index] = act
+                        val previousSlots = if (isSamePageRefresh) activeSlots.toMap() else emptyMap()
+
+                        if (!isSamePageRefresh) {
+                            transientStash.clear()
+                            orphanIcons.clear()
+                        } else {
+                            pruneExpiredLocked(now)
                         }
-                        val activeIndices = ctx.actionsList.map { it.index }.toSet()
-                        scope.launch(Dispatchers.Main) {
-                            val map = _buttonBitmaps.value.toMutableMap()
-                            map.keys.retainAll(activeIndices)
-                            _buttonBitmaps.value = map
+
+                        currentProfileId = ctx.profileID
+                        currentPageIndex = ctx.currentPage
+                        totalPagesCount = if (ctx.totalPages > 0) ctx.totalPages else 1
+                        activeSlots.clear()
+
+                        for (protoAction in ctx.actionsList) {
+                            val metadata = ActionMetadata.fromProto(protoAction)
+                            val slotIndex = metadata.index
+
+                            val preservedBitmap = previousSlots[slotIndex]?.let { prev ->
+                                if (isSameActionIdentity(prev.action, metadata)) prev.bitmap else null
+                            } ?: orphanIcons.remove(slotIndex)?.bitmap
+
+                            activeSlots[slotIndex] = DeckSlotState(
+                                index = slotIndex,
+                                action = metadata,
+                                bitmap = preservedBitmap,
+                                lastUpdatedMs = now
+                            )
                         }
-                    } else {
-                        scope.launch(Dispatchers.Main) {
-                            _buttonBitmaps.value = emptyMap()
-                        }
+
+                        publishStateLocked()
                     }
                 }
 
                 Messages.ServerMessage.PayloadCase.CONTEXTUPDATE -> {
                     val update = serverMessage.contextUpdate
                     Log.d(tag, "Received ContextUpdate profile=${update.profileID}: removeCount=${update.removeCount}, replaceCount=${update.replaceCount}")
+                    stateLock.withLock {
+                        val now = SystemClock.elapsedRealtime()
+                        pruneExpiredLocked(now)
 
-                    scope.launch(Dispatchers.Main) {
-                        val map = _buttonBitmaps.value.toMutableMap()
-                        val stashedBitmaps = mutableMapOf<Int, Bitmap>()
-                        val stashedActions = mutableMapOf<Int, Messages.Action>()
-
-                        // 1. Stash removed items to preserve icons during button move/drag
-                        for (idx in update.removeList) {
-                            map.remove(idx)?.let { stashedBitmaps[idx] = it }
-                            activeActions.remove(idx)?.let { stashedActions[idx] = it }
+                        if (currentProfileId.isNotEmpty() &&
+                            update.profileID.isNotEmpty() &&
+                            update.profileID != currentProfileId
+                        ) {
+                            return@withLock
                         }
 
-                        // 2. Process replaced or moved actions
-                        if (update.replaceCount > 0) {
-                            val unassignedReplaces = mutableListOf<Messages.Action>()
+                        val profileId = update.profileID.ifEmpty { currentProfileId }
 
-                            for (action in update.replaceList) {
-                                val newIdx = action.index
-                                var matchedOldIdx: Int? = null
-
-                                // Try to match by shortcutID first
-                                if (action.hasShortcutID() && action.shortcutID.isNotEmpty()) {
-                                    matchedOldIdx = stashedActions.entries.firstOrNull {
-                                        it.value.hasShortcutID() && it.value.shortcutID == action.shortcutID
-                                    }?.key
-                                }
-
-                                // If not found, match by name, title, and category
-                                if (matchedOldIdx == null) {
-                                    matchedOldIdx = stashedActions.entries.firstOrNull {
-                                        it.value.name == action.name && it.value.title == action.title && it.value.category == action.category
-                                    }?.key
-                                }
-
-                                // If still not found and exactly 1 moved, it's a 1-to-1 move
-                                if (matchedOldIdx == null && stashedActions.size == 1 && update.replaceCount == 1) {
-                                    matchedOldIdx = stashedActions.keys.first()
-                                }
-
-                                if (matchedOldIdx != null) {
-                                    stashedBitmaps.remove(matchedOldIdx)?.let {
-                                        map[newIdx] = it
-                                    }
-                                    stashedActions.remove(matchedOldIdx)
-                                    activeActions[newIdx] = action
-                                } else {
-                                    unassignedReplaces.add(action)
-                                }
-                            }
-
-                            // Fallback for any remaining unassigned replaces
-                            for (action in unassignedReplaces) {
-                                val newIdx = action.index
-                                if (stashedBitmaps.isNotEmpty()) {
-                                    val fallbackOldIdx = stashedBitmaps.keys.first()
-                                    stashedBitmaps.remove(fallbackOldIdx)?.let {
-                                        map[newIdx] = it
-                                    }
-                                    stashedActions.remove(fallbackOldIdx)
-                                }
-                                activeActions[newIdx] = action
+                        // FASE 1: Evakuasi semua slot di removeList ke dalam transientStash
+                        for (removedIndex in update.removeList) {
+                            val removedSlot = activeSlots.remove(removedIndex) ?: continue
+                            if (removedSlot.bitmap != null) {
+                                transientStash.addLast(
+                                    StashedEntry(
+                                        profileId = profileId,
+                                        originIndex = removedIndex,
+                                        action = removedSlot.action,
+                                        bitmap = removedSlot.bitmap,
+                                        stashedAtMs = now,
+                                        evictedInCurrentBatch = false
+                                    )
+                                )
                             }
                         }
 
-                        _buttonBitmaps.value = map
+                        // FASE 2A: Evakuasi semua slot aktif yang akan tertimpa oleh replaceList (Swap / Overwrite)
+                        val incomingActions = update.replaceList.map { ActionMetadata.fromProto(it) }
+                        for (incoming in incomingActions) {
+                            val displacedSlot = activeSlots.remove(incoming.index) ?: continue
+                            if (displacedSlot.bitmap != null) {
+                                transientStash.addLast(
+                                    StashedEntry(
+                                        profileId = profileId,
+                                        originIndex = displacedSlot.index,
+                                        action = displacedSlot.action,
+                                        bitmap = displacedSlot.bitmap,
+                                        stashedAtMs = now,
+                                        evictedInCurrentBatch = true
+                                    )
+                                )
+                            }
+                        }
+
+                        // FASE 2B: Pasangkan setiap aksi baru di replaceList dengan bitmap di stash atau orphanIcons
+                        for (incoming in incomingActions) {
+                            val targetIndex = incoming.index
+
+                            val matchedStash = claimMatchingStashEntryLocked(
+                                profileId = profileId,
+                                targetIndex = targetIndex,
+                                incoming = incoming
+                            )
+
+                            val resolvedBitmap = matchedStash?.bitmap
+                                ?: orphanIcons.remove(targetIndex)?.bitmap
+
+                            activeSlots[targetIndex] = DeckSlotState(
+                                index = targetIndex,
+                                action = incoming,
+                                bitmap = resolvedBitmap,
+                                lastUpdatedMs = now
+                            )
+                        }
+
+                        // Reset flag batch pada sisa item di stash
+                        for (i in transientStash.indices) {
+                            val item = transientStash[i]
+                            if (item.evictedInCurrentBatch) {
+                                transientStash[i] = item.copy(evictedInCurrentBatch = false)
+                            }
+                        }
+
+                        scheduleStashCleanupLocked()
+                        publishStateLocked()
                     }
                 }
 
@@ -532,7 +641,135 @@ class Vsd2Client(
         }
     }
 
+    private fun claimMatchingStashEntryLocked(
+        profileId: String,
+        targetIndex: Int,
+        incoming: ActionMetadata
+    ): StashedEntry? {
+        if (transientStash.isEmpty()) return null
+
+        // TIER 1: Exact shortcutID match
+        if (incoming.shortcutId != null) {
+            val tier1Idx = transientStash.indexOfFirst { entry ->
+                entry.profileId == profileId && entry.action.shortcutId == incoming.shortcutId
+            }
+            if (tier1Idx != -1) {
+                return transientStash.removeAt(tier1Idx)
+            }
+            val sameSlotIdx = transientStash.indexOfFirst { entry ->
+                entry.profileId == profileId &&
+                        entry.originIndex == targetIndex &&
+                        entry.evictedInCurrentBatch &&
+                        entry.action.typeSignature == incoming.typeSignature
+            }
+            return if (sameSlotIdx != -1) transientStash.removeAt(sameSlotIdx) else null
+        }
+
+        // TIER 2: Composite key (category + name + title)
+        // Priority 2A: From DIFFERENT slot (originIndex != targetIndex) - vital for cross-swap!
+        val crossSlotIdx = transientStash.indexOfFirst { entry ->
+            entry.profileId == profileId &&
+                    entry.action.shortcutId == null &&
+                    entry.originIndex != targetIndex &&
+                    entry.action.compositeSignature == incoming.compositeSignature
+        }
+        if (crossSlotIdx != -1) {
+            return transientStash.removeAt(crossSlotIdx)
+        }
+
+        // Priority 2B: Same slot
+        val sameSlotExactIdx = transientStash.indexOfFirst { entry ->
+            entry.profileId == profileId &&
+                    entry.action.shortcutId == null &&
+                    entry.action.compositeSignature == incoming.compositeSignature
+        }
+        if (sameSlotExactIdx != -1) {
+            return transientStash.removeAt(sameSlotExactIdx)
+        }
+
+        // TIER 3: In-Place Edit Fallback (category + name identical in same slot)
+        val inPlaceEditIdx = transientStash.indexOfFirst { entry ->
+            entry.profileId == profileId &&
+                    entry.originIndex == targetIndex &&
+                    entry.evictedInCurrentBatch &&
+                    entry.action.typeSignature == incoming.typeSignature
+        }
+        if (inPlaceEditIdx != -1) {
+            return transientStash.removeAt(inPlaceEditIdx)
+        }
+
+        // Safety Net: if only 1 stash entry exists for this profile, claim it
+        val profileStashCount = transientStash.count { it.profileId == profileId }
+        if (profileStashCount == 1) {
+            val singleIdx = transientStash.indexOfFirst { it.profileId == profileId }
+            if (singleIdx != -1) {
+                return transientStash.removeAt(singleIdx)
+            }
+        }
+
+        return null
+    }
+
+    private fun isSameActionIdentity(a: ActionMetadata, b: ActionMetadata): Boolean {
+        if (a.shortcutId != null || b.shortcutId != null) {
+            return a.shortcutId == b.shortcutId
+        }
+        return a.compositeSignature == b.compositeSignature
+    }
+
+    private fun pruneExpiredLocked(nowMs: Long) {
+        transientStash.removeAll { entry ->
+            (nowMs - entry.stashedAtMs) > stashTtlMs
+        }
+        val orphanIterator = orphanIcons.iterator()
+        while (orphanIterator.hasNext()) {
+            val (_, orphan) = orphanIterator.next()
+            if ((nowMs - orphan.receivedAtMs) > stashTtlMs) {
+                orphanIterator.remove()
+            }
+        }
+    }
+
+    private fun scheduleStashCleanupLocked() {
+        if (transientStash.isEmpty() && orphanIcons.isEmpty()) return
+        cleanupJob?.cancel()
+        cleanupJob = scope.launch(Dispatchers.Default) {
+            delay(stashTtlMs + 50L)
+            stateLock.withLock {
+                pruneExpiredLocked(SystemClock.elapsedRealtime())
+            }
+        }
+    }
+
+    private fun publishStateLocked() {
+        val cur = (currentPageIndex + 1).coerceIn(1, totalPagesCount)
+        _currentPage.value = cur
+        _totalPages.value = totalPagesCount
+
+        val map = mutableMapOf<Int, Bitmap>()
+        for ((idx, slot) in activeSlots) {
+            if (slot.bitmap != null) {
+                map[idx] = slot.bitmap
+            }
+        }
+        _buttonBitmaps.value = map
+    }
+
     fun disconnect() {
+        stateLock.withLock {
+            cleanupJob?.cancel()
+            cleanupJob = null
+            currentProfileId = ""
+            currentPageIndex = 0
+            totalPagesCount = 1
+            activeSlots.clear()
+            transientStash.clear()
+            orphanIcons.clear()
+            _buttonBitmaps.value = emptyMap()
+            _fingerprint.value = null
+            _currentPage.value = 1
+            _totalPages.value = 1
+        }
         val oldWs = webSocket
         webSocket = null
         try {
@@ -540,11 +777,6 @@ class Vsd2Client(
             oldWs?.close(1000, "User disconnected")
         } catch (_: Exception) {}
         _connectionState.value = ConnectionState.DISCONNECTED
-        _buttonBitmaps.value = emptyMap()
-        activeActions.clear()
-        _fingerprint.value = null
-        _currentPage.value = 1
-        _totalPages.value = 1
         isAuthenticated = false
         isEncryptedSession = false
         isDeviceSetupDone = false
