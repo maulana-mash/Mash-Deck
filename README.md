@@ -1,40 +1,61 @@
-# Mash Deck
+<p align="center">
+  <img src="assets/logo.png" width="120" alt="Mash Deck Logo" />
+</p>
 
-Mash Deck is an open-source alternative to Elgato Stream Deck Mobile for Android. A subscription-free drop-in replacement communicating natively with Stream Deck PC via reverse-engineered VSD2 encrypted WebSocket (AES-256-GCM, ECDH, Protobuf) with local mDNS discovery and zero cloud dependency.
+<h1 align="center">Mash Deck</h1>
+
+<hr />
+
+<p align="center">
+  <b>Android Virtual Controller Client (VSD2 Protocol)</b><br />
+  A high-performance, open-source macro keypad client for Android devices communicating directly over local Wi-Fi with encrypted WebSocket protocol, bi-directional sync, and multi-device profile slots.
+</p>
+
+<p align="center">
+  <a href="https://github.com/maulana-mash/Mash-Deck/releases/latest/download/MashDeck.apk">
+    <img src="https://img.shields.io/badge/DOWNLOAD%20APK-LATEST%20RELEASE-111111?style=for-the-badge&logo=android&logoColor=white&labelColor=333333" alt="Download APK" />
+  </a>
+  <img src="https://img.shields.io/badge/PLATFORM-ANDROID%20API%2024%2B-111111?style=for-the-badge&labelColor=333333" alt="Platform" />
+  <img src="https://img.shields.io/badge/PROTOCOL-VSD2%20NATIVE-111111?style=for-the-badge&labelColor=333333" alt="Protocol" />
+  <img src="https://img.shields.io/badge/SECURITY-AES--256--GCM-111111?style=for-the-badge&labelColor=333333" alt="Security" />
+  <img src="https://img.shields.io/badge/LICENSE-MIT-111111?style=for-the-badge&labelColor=333333" alt="License" />
+</p>
+
+<br />
 
 ---
 
 ## Features
 
-- **Native VSD2 Engine**: End-to-end encrypted WebSocket connection (AES-256-GCM / ECDH) matching the official Stream Deck mobile protocol.
-- **Bi-directional Page Sync**: Dynamic layout and page number synchronization directly matched to Stream Deck PC.
-- **Multi-Device Profile Slots**: Switch between distinct virtual device profiles (e.g., Work, Streaming, Gaming) on the fly, allowing separate layouts and profiles on the PC.
-- **Ultra-Fast mDNS Discovery**: Instant discovery of Stream Deck hosts running on the local network, with fallback manual and QR pairing.
-- **Modern Jetpack Compose Interface**: Optimized dark slate theme with OLED-friendly styling, fluid animations, and customizable grid densities.
-- **Hardware Feedback**: Native haptic feedback on key presses.
+- **Encrypted Local Networking**: Native WebSocket communication with end-to-end ECDH P-256 key exchange and AES-256-GCM symmetric encryption.
+- **Bi-directional Page Sync**: Real-time layout and button state synchronization between mobile keypad and host application.
+- **Virtual Device Slots**: Dynamic multi-profile management allowing independent layouts across different workflows (e.g., Productivity, Streaming, Gaming).
+- **Zero Configuration Discovery**: Instant local network discovery using mDNS, with manual IP address and QR code pairing fallbacks.
+- **Modern Jetpack Compose UI**: Clean dark slate visual styling optimized for OLED displays with tactile haptic feedback.
+- **Completely Local & Subscription-Free**: Runs entirely within your local Wi-Fi network without third-party cloud servers or recurring fees.
 
 ---
 
-## Installation & Download
+## Download & Installation
 
-Pre-compiled APK packages are available directly in the [Releases](https://github.com/maulana-mash/Mash-Deck/releases) section.
+Pre-compiled APK releases are available directly under the [Releases](https://github.com/maulana-mash/Mash-Deck/releases) tab.
 
-1. Download `MashDeck.apk` from the latest release.
-2. Install the APK on your Android device (ensure *Install from unknown sources* is permitted).
-3. Ensure your phone and PC are connected to the same Wi-Fi / local network.
-4. Launch Stream Deck on your PC, then open Mash Deck to auto-discover and connect.
+1. Download **[MashDeck.apk](https://github.com/maulana-mash/Mash-Deck/releases/latest/download/MashDeck.apk)** from the latest release.
+2. Install the package on your Android device (enable *Install unknown apps* if prompted).
+3. Connect your Android device to the same Wi-Fi network as your host computer.
+4. Launch the application to auto-discover and link with your desktop host.
 
 ---
 
-## Tech Stack
+## Architecture & Tech Stack
 
-- **Platform**: Android (Min SDK 24, Target SDK 34)
-- **Language**: Kotlin
-- **UI Framework**: Jetpack Compose & Material 3
-- **Network**: OkHttp 4 (WebSocket), JmDNS (mDNS Service Discovery)
-- **Protocol**: Protocol Buffers (Google Protobuf)
-- **Security**: SpongyCastle / BouncyCastle (ECDH + AES-256-GCM)
-- **Image Processing**: LibLZF native decompression & Android Bitmap rendering
+- **Target Platform**: Android (Minimum SDK 24 / Nougat, Target SDK 35)
+- **Programming Language**: Kotlin
+- **User Interface**: Jetpack Compose & Material Design 3
+- **Network Engine**: OkHttp 4 (WebSocket), JmDNS (mDNS Service Discovery)
+- **Data Serialization**: Protocol Buffers (Google Protobuf)
+- **Cryptography**: SpongyCastle / BouncyCastle (ECDH P-256, AES-256-GCM)
+- **Image Decompression**: Native LibLZF decompressor and Android Bitmap rendering
 
 ---
 
@@ -42,23 +63,32 @@ Pre-compiled APK packages are available directly in the [Releases](https://githu
 
 ### Prerequisites
 - JDK 17 or higher
-- Android SDK (API 34)
+- Android SDK (API 34/35)
 
 ### Build Steps
-1. Clone the repository:
+1. Clone this repository:
    ```bash
    git clone https://github.com/maulana-mash/Mash-Deck.git
    cd Mash-Deck
    ```
-2. Build the release APK:
+2. Compile the release APK package:
    ```bash
    ./gradlew assembleRelease
    ```
-3. The generated APK will be located at:
+3. The compiled binary will be placed at:
    `app/build/outputs/apk/release/app-release.apk`
+
+---
+
+## Automated CI/CD (GitHub Actions)
+
+An automated release workflow is configured in `.github/workflows/release.yml`. When pushing a new version tag (e.g. `v1.0.1`), GitHub Actions will automatically:
+1. Initialize the Android build environment in the cloud runner.
+2. Compile the signed release APK (`MashDeck.apk`).
+3. Publish a new GitHub Release with the APK artifact attached.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the terms of the MIT License.
