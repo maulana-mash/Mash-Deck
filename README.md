@@ -17,7 +17,7 @@ Mash Deck is an open-source alternative to Elgato Stream Deck Mobile for Android
 
 ## Installation & Download
 
-Pre-compiled APK packages are available directly in the [Releases](https://github.com/maulana-mash/mash-deck/releases) section.
+Pre-compiled APK packages are available directly in the [Releases](https://github.com/maulana-mash/Mash-Deck/releases) section.
 
 1. Download `MashDeck.apk` from the latest release.
 2. Install the APK on your Android device (ensure *Install from unknown sources* is permitted).
@@ -47,8 +47,8 @@ Pre-compiled APK packages are available directly in the [Releases](https://githu
 ### Build Steps
 1. Clone the repository:
    ```bash
-   git clone https://github.com/maulana-mash/mash-deck.git
-   cd mash-deck
+   git clone https://github.com/maulana-mash/Mash-Deck.git
+   cd Mash-Deck
    ```
 2. Build the release APK:
    ```bash
