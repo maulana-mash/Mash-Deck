@@ -149,23 +149,77 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                            // Main Device Card
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFF1C1C1E))
-                                    .border(1.dp, Color(0xFF2C2C2E), RoundedCornerShape(16.dp))
-                                    .padding(18.dp)
-                            ) {
-                                Column {
-                                    // Title & Host
-                                    Text(
-                                        text = "Mash Stream Deck",
-                                        color = Color.White,
-                                        fontSize = 20.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                // Group 1: Device Profile (Akun Virtual Device) at the very top
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF1C1C1E))
+                        .border(1.dp, Color(0xFF2C2C2E), RoundedCornerShape(16.dp))
+                        .clickable { activeSubSheet = SubSheet.PROFILE_SLOT }
+                        .padding(horizontal = 18.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF2C2C2E)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Dns,
+                                contentDescription = "Device Profile",
+                                tint = Color(0xFF8BAAC9),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Device Profile",
+                                color = Color(0xFFA1A1AA),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = activeProfile,
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Switch Profile",
+                            tint = Color(0xFF71717A),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Main Device Card
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF1C1C1E))
+                        .border(1.dp, Color(0xFF2C2C2E), RoundedCornerShape(16.dp))
+                        .padding(18.dp)
+                ) {
+                    Column {
+                        // Title & Host
+                        Text(
+                            text = activeProfile,
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                                     Spacer(modifier = Modifier.height(3.dp))
                                     Text(
                                         text = connectedServerName,
@@ -253,16 +307,6 @@ fun SettingsDialog(
                                         label = "Faceplate",
                                         value = config.background.displayName,
                                         onClick = { activeSubSheet = SubSheet.FACEPLATE }
-                                    )
-
-                                    HorizontalDivider(color = Color(0xFF2C2C2E), thickness = 0.8.dp)
-
-                                    // Row 5: Virtual Device Profile Slot
-                                    SettingsItemRow(
-                                        icon = Icons.Default.Dns,
-                                        label = "Device Profile",
-                                        value = activeProfile,
-                                        onClick = { activeSubSheet = SubSheet.PROFILE_SLOT }
                                     )
 
                                     if (isConnected) {

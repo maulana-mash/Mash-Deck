@@ -53,6 +53,8 @@ class MainActivity : ComponentActivity() {
     private var isLockTaskActive by mutableStateOf(false)
     private var isDndActive by mutableStateOf(false)
     private var showSettings by mutableStateOf(false)
+    private var activeProfileName by mutableStateOf(ProfileSlotPrefs.DEFAULT_DEVICE_NAME)
+    private var profileSlots by mutableStateOf<List<String>>(listOf(ProfileSlotPrefs.DEFAULT_DEVICE_NAME))
 
     private fun applyKeepScreenOn(enabled: Boolean) {
         if (enabled) {
@@ -76,7 +78,9 @@ class MainActivity : ComponentActivity() {
         // Load saved preferences
         loadFocusPreferences()
         currentOrientation = getSavedOrientation()
-        currentDeckConfig = getSavedDeckConfig()
+        activeProfileName = ProfileSlotPrefs.getActiveDevice(this)
+        profileSlots = ProfileSlotPrefs.getSlots(this)
+        currentDeckConfig = ProfileSlotPrefs.getProfileConfig(this, activeProfileName)
         savedServer = loadSavedServer()
         isAutoConnectEnabled = loadSavedAutoConnect()
 
@@ -86,7 +90,7 @@ class MainActivity : ComponentActivity() {
         val cryptoBox = getOrCreateCryptoBox()
         mdnsDiscovery = MdnsDiscovery(this, lifecycleScope)
         vsdClient = Vsd2Client(lifecycleScope, cryptoBox)
-        vsdClient.targetDeviceName = ProfileSlotPrefs.getActiveDevice(this)
+        vsdClient.targetDeviceName = activeProfileName
 
         // Start dual discovery: mDNS + active TCP probe to saved server
         mdnsDiscovery.startDiscovery(
@@ -109,9 +113,6 @@ class MainActivity : ComponentActivity() {
                     val totalPages by vsdClient.totalPages.collectAsState()
                     val errorMessage by vsdClient.errorMessage.collectAsState()
                     val pcDiscoveredDevices by vsdClient.discoveredDevices.collectAsState()
-
-                    var activeProfileName by remember { mutableStateOf(ProfileSlotPrefs.getActiveDevice(this@MainActivity)) }
-                    var profileSlots by remember { mutableStateOf(ProfileSlotPrefs.getSlots(this@MainActivity)) }
 
                     LaunchedEffect(pcDiscoveredDevices) {
                         if (pcDiscoveredDevices.isNotEmpty()) {
@@ -216,7 +217,8 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onOpenSettings = {
                                     showSettings = true
-                                }
+                                },
+                                activeProfileName = activeProfileName
                             )
                         }
 
@@ -297,7 +299,9 @@ class MainActivity : ComponentActivity() {
                                 ProfileSlotPrefs.setActiveDevice(this@MainActivity, selected)
                                 activeProfileName = selected
                                 profileSlots = ProfileSlotPrefs.getSlots(this@MainActivity)
-                                vsdClient.switchTargetDevice(selected, currentDeckConfig)
+                                val slotConfig = ProfileSlotPrefs.getProfileConfig(this@MainActivity, selected)
+                                currentDeckConfig = slotConfig
+                                vsdClient.switchTargetDevice(selected, slotConfig)
                             },
                             onAddProfileSlot = { newSlot ->
                                 val clean = newSlot.trim()
@@ -305,16 +309,21 @@ class MainActivity : ComponentActivity() {
                                     ProfileSlotPrefs.setActiveDevice(this@MainActivity, clean)
                                     profileSlots = ProfileSlotPrefs.addOrMergeSlots(this@MainActivity, listOf(clean))
                                     activeProfileName = clean
-                                    vsdClient.switchTargetDevice(clean, currentDeckConfig)
+                                    val slotConfig = ProfileSlotPrefs.getProfileConfig(this@MainActivity, clean)
+                                    currentDeckConfig = slotConfig
+                                    vsdClient.switchTargetDevice(clean, slotConfig)
                                 }
                             },
                             onRemoveProfileSlot = { removed ->
                                 profileSlots = ProfileSlotPrefs.removeSlot(this@MainActivity, removed)
                                 activeProfileName = ProfileSlotPrefs.getActiveDevice(this@MainActivity)
-                                vsdClient.switchTargetDevice(activeProfileName, currentDeckConfig)
+                                val slotConfig = ProfileSlotPrefs.getProfileConfig(this@MainActivity, activeProfileName)
+                                currentDeckConfig = slotConfig
+                                vsdClient.switchTargetDevice(activeProfileName, slotConfig)
                             },
                             onConfigChange = { newConfig ->
                                 currentDeckConfig = newConfig
+                                ProfileSlotPrefs.saveProfileConfig(this@MainActivity, activeProfileName, newConfig)
                                 saveDeckConfig(newConfig)
                                 vsdClient.updateGridConfig(newConfig)
                             },

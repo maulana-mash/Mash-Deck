@@ -46,7 +46,8 @@ fun DiscoveryScreen(
     onSelectServer: (host: String, port: Int, name: String) -> Unit,
     onRefresh: () -> Unit,
     onOpenQrScanner: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    activeProfileName: String = "Mash Stream Deck"
 ) {
     var isManualExpanded by remember { mutableStateOf(false) }
     var manualHost by remember(savedServer) { mutableStateOf(savedServer?.host ?: "10.214.158.2") }
@@ -83,16 +84,17 @@ fun DiscoveryScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "Get Connected",
+                            text = "Mash Deck",
                             color = Color.White,
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = (-0.5).sp
                         )
                         Text(
-                            text = "Mash Deck Controller",
-                            color = Color(0xFF71717A),
-                            fontSize = 12.sp
+                            text = activeProfileName,
+                            color = Color(0xFF8BAAC9),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
