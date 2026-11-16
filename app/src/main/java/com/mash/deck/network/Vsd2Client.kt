@@ -76,8 +76,9 @@ class Vsd2Client(
     private var activeDeviceID: String? = null
     private var isDeviceSetupDone = false
 
-    private val transientRemovedBitmaps = ConcurrentHashMap<Int, Bitmap>()
-    private var stashClearJob: Job? = null
+    private val activeActions = ConcurrentHashMap<Int, Messages.Action>()
+    private val stashedBitmaps = ConcurrentHashMap<Int, Pair<Messages.Action?, Bitmap>>()
+    private var refreshJob: Job? = null
 
     fun switchTargetDevice(newDeviceName: String, config: DeckConfig? = null) {
         val clean = newDeviceName.trim().ifEmpty { "Mash Stream Deck" }
@@ -309,9 +310,13 @@ class Vsd2Client(
                     _currentPage.value = cur
                     _totalPages.value = tot
 
-                    transientRemovedBitmaps.clear()
+                    activeActions.clear()
+                    stashedBitmaps.clear()
 
                     if (ctx.actionsCount > 0) {
+                        for (act in ctx.actionsList) {
+                            activeActions[act.index] = act
+                        }
                         val activeIndices = ctx.actionsList.map { it.index }.toSet()
                         scope.launch(Dispatchers.Main) {
                             val map = _buttonBitmaps.value.toMutableMap()
@@ -332,24 +337,41 @@ class Vsd2Client(
                     scope.launch(Dispatchers.Main) {
                         val map = _buttonBitmaps.value.toMutableMap()
 
-                        // 1. Stash removed bitmaps before removing from active map
+                        // 1. Stash removed items to preserve bitmaps for move/swap
                         if (update.removeCount > 0) {
                             for (idx in update.removeList) {
-                                map.remove(idx)?.let { transientRemovedBitmaps[idx] = it }
+                                val oldAction = activeActions.remove(idx)
+                                val oldBitmap = map.remove(idx)
+                                if (oldBitmap != null) {
+                                    stashedBitmaps[idx] = Pair(oldAction, oldBitmap)
+                                }
                             }
                         }
 
-                        // 2. If there are replacements and slots need bitmaps, transfer from stash
+                        // 2. Transfer bitmap to new slot immediately (0 ms local update)
                         if (update.replaceCount > 0) {
                             for (action in update.replaceList) {
                                 val newIdx = action.index
-                                if (!map.containsKey(newIdx) && transientRemovedBitmaps.isNotEmpty()) {
-                                    val candidateKey = transientRemovedBitmaps.keys.firstOrNull { it != newIdx }
-                                        ?: transientRemovedBitmaps.keys.firstOrNull()
+                                activeActions[newIdx] = action
 
-                                    if (candidateKey != null) {
-                                        transientRemovedBitmaps.remove(candidateKey)?.let {
-                                            map[newIdx] = it
+                                if (!map.containsKey(newIdx) && stashedBitmaps.isNotEmpty()) {
+                                    // Match by title & name if available
+                                    val matchedKey = stashedBitmaps.entries.firstOrNull { (_, entry) ->
+                                        val (stashedAction, _) = entry
+                                        if (stashedAction != null) {
+                                            if (action.title.isNotEmpty() && action.title == stashedAction.title) true
+                                            else if (action.name.isNotEmpty() && action.name == stashedAction.name && action.title.isEmpty() && stashedAction.title.isEmpty()) true
+                                            else false
+                                        } else false
+                                    }?.key ?: if (stashedBitmaps.size == 1) {
+                                        stashedBitmaps.keys.first()
+                                    } else {
+                                        stashedBitmaps.keys.firstOrNull { it != newIdx } ?: stashedBitmaps.keys.firstOrNull()
+                                    }
+
+                                    if (matchedKey != null) {
+                                        stashedBitmaps.remove(matchedKey)?.let { (_, bitmap) ->
+                                            map[newIdx] = bitmap
                                         }
                                     }
                                 }
@@ -358,12 +380,8 @@ class Vsd2Client(
 
                         _buttonBitmaps.value = map
 
-                        // Schedule cleanup of transient stash after 1.5 seconds if unused
-                        stashClearJob?.cancel()
-                        stashClearJob = scope.launch {
-                            delay(1500)
-                            transientRemovedBitmaps.clear()
-                        }
+                        // 3. Request authoritative background refresh from PC (debounced 250ms)
+                        scheduleKeypadRefresh()
                     }
                 }
 
@@ -504,7 +522,25 @@ class Vsd2Client(
         }
     }
 
+    private fun scheduleKeypadRefresh() {
+        refreshJob?.cancel()
+        refreshJob = scope.launch(Dispatchers.Default) {
+            delay(250)
+            val cfg = lastConfig
+            if (cfg != null && isAuthenticated) {
+                Log.d(tag, "Triggering background keypad refresh to sync with PC")
+                updateGridConfig(cfg)
+            }
+            delay(1250)
+            stashedBitmaps.clear()
+        }
+    }
+
     fun disconnect() {
+        refreshJob?.cancel()
+        refreshJob = null
+        activeActions.clear()
+        stashedBitmaps.clear()
         val oldWs = webSocket
         webSocket = null
         try {
@@ -513,9 +549,6 @@ class Vsd2Client(
         } catch (_: Exception) {}
         _connectionState.value = ConnectionState.DISCONNECTED
         _buttonBitmaps.value = emptyMap()
-        transientRemovedBitmaps.clear()
-        stashClearJob?.cancel()
-        stashClearJob = null
         _fingerprint.value = null
         _currentPage.value = 1
         _totalPages.value = 1
