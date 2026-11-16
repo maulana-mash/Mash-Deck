@@ -1,12 +1,12 @@
 # Mash Deck
 
-Mash Deck is an open-source, ultra-low-latency Android client designed to communicate seamlessly with Elgato Stream Deck software on PC over the local network using the native VSD2 (Virtual Stream Deck 2) encrypted protocol.
+Mash Deck is an open-source alternative to Elgato Stream Deck Mobile for Android. A subscription-free drop-in replacement communicating natively with Stream Deck PC via reverse-engineered VSD2 encrypted WebSocket (AES-256-GCM, ECDH, Protobuf) with local mDNS discovery and zero cloud dependency.
 
 ---
 
 ## Features
 
-- **Native VSD2 Engine**: End-to-end encrypted WebSocket connection (AES-GCM / ECDH) matching the official Stream Deck mobile protocol.
+- **Native VSD2 Engine**: End-to-end encrypted WebSocket connection (AES-256-GCM / ECDH) matching the official Stream Deck mobile protocol.
 - **Bi-directional Page Sync**: Dynamic layout and page number synchronization directly matched to Stream Deck PC.
 - **Multi-Device Profile Slots**: Switch between distinct virtual device profiles (e.g., Work, Streaming, Gaming) on the fly, allowing separate layouts and profiles on the PC.
 - **Ultra-Fast mDNS Discovery**: Instant discovery of Stream Deck hosts running on the local network, with fallback manual and QR pairing.
@@ -17,7 +17,7 @@ Mash Deck is an open-source, ultra-low-latency Android client designed to commun
 
 ## Installation & Download
 
-Pre-compiled APK packages are available directly in the [Releases](https://github.com/mash-deck/mash-deck/releases) section.
+Pre-compiled APK packages are available directly in the [Releases](https://github.com/maulana-mash/mash-deck/releases) section.
 
 1. Download `MashDeck.apk` from the latest release.
 2. Install the APK on your Android device (ensure *Install from unknown sources* is permitted).
@@ -47,7 +47,7 @@ Pre-compiled APK packages are available directly in the [Releases](https://githu
 ### Build Steps
 1. Clone the repository:
    ```bash
-   git clone https://github.com/<your-username>/mash-deck.git
+   git clone https://github.com/maulana-mash/mash-deck.git
    cd mash-deck
    ```
 2. Build the release APK:
