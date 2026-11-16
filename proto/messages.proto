@@ -1,0 +1,483 @@
+syntax = "proto3";
+
+option swift_prefix = "SD";
+option java_package = "com.elgato.vsd2";
+
+package vsd2;
+
+message Size {
+    uint32 width = 1;
+    uint32 height = 2;
+}
+
+message UIntRange {
+    uint32 min = 1;
+    uint32 max = 2;
+}
+
+/**
+ * Image compression format. Only the LZ* family is supported in production relases
+ * of Stream Deck Desktop.
+ */
+enum ImageFormat {
+    LZF = 0;
+    LZFSE = 1;
+    LZ4 = 2;
+    BMP = 3;
+    JPG = 4;
+    PNG = 5;
+    Invalid = 100;
+}
+
+enum ImageType {
+    Opaque = 0;
+    Transparent = 1;
+}
+
+message Image {
+    ImageFormat format = 1;
+    ImageType type = 2;
+    Size size = 3;
+    uint32 rowBytes = 4;
+    bytes image = 5;
+}
+
+/**
+ * Information about the client and its capabilties send right after the connection was established.
+ */
+message ClientInformation {
+
+    // The name of the device (e.g. "My iPhone")
+    string name = 1;
+
+    // User agent (e.g. "Stream Deck Mobile/2.0.1")
+    string userAgent = 2;
+
+    // Protocol version (subversion of the VSD2 protocol) supported by this client.
+    uint32 protocolVersion = 3;
+
+    // Device model (e.g. iPhone, iPod thouch, Apple Watch, Galaxy S8)
+    optional string deviceModel = 4;
+
+    // OS name (e.g. iOS, Android, WatchOS)
+    optional string osName = 5;
+
+    // OS version (e.g. 6.0, 15.1, ...)
+    optional string osVersion = 6;
+}
+
+/**
+ * Message sent by the client to introduce itself.
+ */
+message HelloFromClient {
+    // The public key of this client.
+    bytes publicKey = 1;
+
+    // The client information object.
+    ClientInformation clientInformation = 2;
+}
+
+/**
+ * Ask the server to authenticate this client.
+ * 
+ * NOTE: 
+ * The server will show the first 6 digits of the hex representation of
+ * a BLAKE2b hash of the clients public key to give the user the option
+ * to trust or reject the client.
+ *
+ * Returns:
+ * - [Ok] if the authentication request was accepted (user trusted the client)
+ * - [Error]
+ *       - Cancelled if request was cancelled
+ *       - ResourceLimitReached if the server is already handling an authentication request
+ *       - AuthenticationRejected if user rejected the authentication request
+ */
+message Authenticate {
+    // Unique ID of this request.
+    uint32 requestID = 1;
+}
+
+/**
+ * Ask the server to cancel an ongoing authentication request.
+ *
+ * Returns:
+ * - [Ok] if an ongoing authentication request was cancelled
+ * - [Error]
+ *       - InvalidState if there is no pending request
+ */
+message CancelAuthenticate {
+    // Unique ID of this request.
+    uint32 requestID = 1;
+}
+
+/**
+ * Configuration of the keypad.
+ */
+message KeypadConfig {
+
+    // Supported icon image formats that the server can choose from.
+    repeated ImageFormat supportedIconImageFormats = 1;
+
+    // Desired regular icon size.
+    Size iconSize = 2;
+
+    // Desired pressed button icon size (usually same as regual).
+    // Will be set to the value of iconSize if omitted.
+    optional Size pressedIconSize = 3;
+
+    // Device has high DPI display (like retina).
+    bool highDPI = 4;
+
+    // Images might be overscaled (always set to true is highly recommended).
+    bool overscale = 5;
+
+    // The number of presented button columns on the keypad.
+    // Will be set to the value of layout if omitted.
+    optional Size layoutCrop = 6;
+
+    // Get context information
+    bool enableContextAPI = 7;
+}
+
+/**
+ * Partialy update the key pad config.
+ */
+message UpdateKeypadConfig {
+    // Set new desired regular icon size.
+    optional Size iconSize = 1;
+
+    // Set new desired pressed button icon size.
+    // Any previously set value will be reset if this is omitted.
+    optional Size pressedIconSize = 2;
+
+    // Change if client expects high DPI icons.
+    // Keeps the previously set value if omitted.
+    optional bool highDPI = 3;
+
+    // Set new layout crop.
+    // Any previously set value will be reset if this is omitted.
+    optional Size layoutCrop = 4;
+}
+
+/**
+ * Generic error response message.
+ */
+message Error {
+    enum Code {
+        // A virtual device with the given ID wasn't found.
+        DeviceNotFound = 0;
+        // The device name was already taken.
+        DeviceNameAlreadyTaken = 1;
+        // Request is rejected because a resource limit is reached.
+        // E.g. a client requests more than one virtual device connection.
+        ResourceLimitReached = 2;
+        // User rejected authentication request.
+        AuthenticationRejected = 3;
+        // An ongoing request was cancelled. 
+        Cancelled = 4;
+        // A request was send in the wrong state and can't be handled
+        InvalidState = 5;
+    }
+
+    // ID of the request leading to this result message.
+    uint32 requestID = 1;
+
+    // The error code.
+    Code code = 2;
+
+    // An optional error reason.
+    optional string reason = 3;
+}
+
+message Ok {
+    // ID of the request leading to this result message.
+    uint32 requestID = 1;
+}
+
+message VirtualDevice { 
+    // The device ID.
+    string id = 1;
+
+    // The display name of the device.
+    string name = 2;
+}
+
+/**
+ * Request to create a virtual device on the server.
+ */
+ message CreateVirtualDevice {
+    // Unique ID of this request.
+    uint32 requestID = 1;
+
+    // The name of the new virtual device.
+    string name = 2;
+
+    // The `KeyPadConfig` to use for the device.
+    KeypadConfig keypadConfig = 3;
+
+    // If set to true the server will not ensure this name was not taken.
+    bool skipUniquenessOfNameValidation = 4;
+}
+
+/**
+ * Request to connect this connection to an exiting virtual device on the server.
+ */
+message OpenVirtualDevice {
+    // Unique ID of this request.
+    uint32 requestID = 1;
+
+    // The ID of this virtual device to open.
+    string deviceID = 2;
+
+    // The `KeyPadConfig` to use for the device.
+    KeypadConfig keypadConfig = 3;
+}
+
+/**
+ * Deletes the active open virtual device.
+ *
+ * NOTE: The connection will be closed shortly after successfully issuing
+ * this request.
+ */
+message DeleteVirtualDevice {
+}
+
+/**
+ * The connection is now associated with an open virtual device.
+ */
+message VirtualDeviceOpened {
+    // Unique ID of this request.
+    uint32 requestID = 1;
+
+    // Information about the opened device.
+    VirtualDevice device = 2;
+}
+
+/**
+ * List of available virtual devices for this client.
+ */
+message VirtualDeviceList {
+    repeated VirtualDevice devices = 1;
+}
+
+message ServiceEndpoints {
+    repeated string addresses = 1;
+    uint32 port = 2;
+}
+
+/**
+ * Capabilities of the client.
+ */
+message ClientCapabilities {
+    bool isUserPro = 1;
+}
+
+/**
+ * Response to `HelloFromClient` to introduce the server to the client.
+ */
+message HelloFromServer {
+    // The workstation ID of this server.
+    string workstationID = 1;
+
+    // The servers host name.
+    string hostname = 2;
+
+    // The servers version.
+    string version = 3;
+
+    // Highest protocol version (subversion of the VSD2 protocol) supported by this server.
+    uint32 protocolVersion = 4;
+
+    // The public key of the server.
+    bytes publicKey = 5;
+
+    // Is set to true if the client needs authentication before accessing any resources.
+    bool clientNeedsAuthentication = 6;
+
+    // OS name (e.g. macOS, Windows)
+    // Added in protocol version 2
+    optional string osName = 7;
+
+    // OS version (e.g. 6.0, 15.1, ...)
+    // Added in protocol version 2
+    optional string osVersion = 8;
+
+    // Endpoints through which this service can be reached.
+    // Added in protocol version 2
+    optional ServiceEndpoints endpoints = 9;
+}
+
+/**
+ * An icon on a keypad.
+ */
+message Icon {
+    // The icon location.
+    uint32 index = 1;
+    // The image object.
+    Image image = 2;
+}
+
+/**
+ * Trigger a key press event.
+ */
+message KeyPress {
+    // The location of the key that was pressed.
+    uint32 index = 1;
+    // The current state of the key.
+    bool pressed = 2;
+}
+
+/**
+ * Select the next keypad page.
+ */
+message NextPage {}
+
+/**
+ * Select the previous keypad page.
+ */
+message PreviousPage {}
+
+/**
+ * Select a specific page by index.
+ */
+message PageByIndex {
+    uint32 index = 1;
+}
+
+/**
+ * Context messages
+ */
+
+message Action {
+    uint32 index = 1;
+    string title = 2;
+    string name = 3;
+    string category = 4;
+    optional string shortcutID = 5;
+}
+
+/**
+ * Sent when a profile has changed.
+ */
+message Context {
+    // Profile UUID
+    string profileID = 1;
+    // Total number of pages.
+    uint32 totalPages = 2;
+    // Current page number.
+    uint32 currentPage = 3;
+    // List of actions
+    repeated Action actions = 4;
+}
+
+/**
+ * Sent when a profile got updated.
+ */
+message ContextUpdate {
+    // Profile UUID
+    string profileID = 1;
+    // List of actions to replace
+    repeated Action replace = 2;
+    // List of key indecies to remove
+    repeated uint32 remove = 3;
+}
+
+/**
+ * Shortcut messages
+ */
+
+ message Shortcut {
+    string id = 1;
+    string title = 2;
+    string name = 3;
+    string category = 4;
+    optional Image icon = 5;
+}
+
+/**
+ * Sent when a profile is changed that has associated shortcuts.
+ */
+message Shortcuts {
+    // List of shortcuts
+    repeated Shortcut shortcuts = 1;
+}
+
+/**
+ * Sent when shortcuts got updated.
+ */
+message ShortcutsUpdate {
+    // List of shortcuts to replace
+    repeated Shortcut replace = 1;
+    // List of shortcut IDs to remove
+    repeated string remove = 2;
+}
+
+message AssignShortcut {
+    // Profile UUID
+    string profileID = 1;
+    // Shortcut ID generated by the system (e.g. SiriKit)
+    string shortcutID = 2;
+    // Index of key
+    uint32 index = 3;
+}
+
+message RemoveShortcut {
+    // Unique ID of this request.
+    uint32 requestID = 1;
+    // Shortcut UUID
+    string shortcutID = 2;
+}
+
+message TriggerShortcut {
+    string deviceID = 1;
+    string shortcutID = 2;
+}
+
+/**
+ * Messages send from Stream Deck Desktop to Stream Deck Clients.
+ */
+message ServerMessage {
+    oneof payload {
+        Error error = 1;
+        Ok ok = 2;
+
+        HelloFromServer hello = 10;
+
+        VirtualDeviceList virtualDeviceList = 20;
+        VirtualDeviceOpened virtualDeviceOpened = 21;
+        
+        Context context = 30;
+        ContextUpdate contextUpdate = 31;
+        Shortcuts shortcuts = 32;
+        ShortcutsUpdate shortcutsUpdate = 33;
+
+        Icon icon = 40;
+    }
+}
+
+/**
+ * Messages send from Stream Deck Clients to Stream Deck Desktop.
+ */
+message ClientMessage {
+    oneof payload {
+        HelloFromClient hello = 1;
+        Authenticate authenticate = 2;
+        CancelAuthenticate cancelAuthenticate = 3;
+
+        CreateVirtualDevice createVirtualDevice = 10;
+        OpenVirtualDevice openVirtualDevice = 11;
+        DeleteVirtualDevice deleteVirtualDevice = 12;
+
+        KeyPress keyPress = 20;
+        NextPage nextPage = 21;
+        PreviousPage previousPage = 22;
+        PageByIndex pageByIndex = 23;
+        UpdateKeypadConfig updateKeypadConfig = 30;
+
+        AssignShortcut assignShortcut = 31;
+        RemoveShortcut removeShortcut = 32;
+        TriggerShortcut triggerShortcut = 33;
+
+        ClientCapabilities clientCapabilities = 100;
+    }
+}
