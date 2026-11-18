@@ -15,21 +15,47 @@ object ProfileSlotPrefs {
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun getActiveDevice(context: Context): String =
-        prefs(context).getString(KEY_ACTIVE_DEVICE, DEFAULT_DEVICE_NAME)
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?: DEFAULT_DEVICE_NAME
+    fun getDefaultDeviceName(): String {
+        val model = android.os.Build.MODEL?.trim().orEmpty()
+        val brand = android.os.Build.BRAND?.replaceFirstChar { it.uppercase() }?.trim().orEmpty()
+        val dev = if (brand.isNotEmpty() && !model.contains(brand, ignoreCase = true)) {
+            "$brand $model"
+        } else {
+            model
+        }
+        val clean = dev.replace(Regex("[^a-zA-Z0-9 _-]"), "").trim()
+        return if (clean.isNotEmpty()) "Mash Deck - $clean" else DEFAULT_DEVICE_NAME
+    }
+
+    fun getActiveDevice(context: Context): String {
+        val p = prefs(context)
+        val saved = p.getString(KEY_ACTIVE_DEVICE, null)?.trim()
+        if (!saved.isNullOrEmpty()) {
+            return saved
+        }
+        // If legacy profile exists for "Mash Stream Deck", preserve it
+        val legacyPrefix = profilePrefix(DEFAULT_DEVICE_NAME)
+        if (p.contains("${legacyPrefix}preset") || p.contains("${legacyPrefix}is_custom") || p.contains(KEY_DEVICE_SLOTS)) {
+            p.edit().putString(KEY_ACTIVE_DEVICE, DEFAULT_DEVICE_NAME).apply()
+            return DEFAULT_DEVICE_NAME
+        }
+        // First install on a new device: initialize with device-specific unique name
+        val defaultName = getDefaultDeviceName()
+        p.edit().putString(KEY_ACTIVE_DEVICE, defaultName).apply()
+        addOrMergeSlots(context, listOf(defaultName))
+        return defaultName
+    }
 
     fun setActiveDevice(context: Context, name: String) {
-        val clean = name.trim().ifEmpty { DEFAULT_DEVICE_NAME }
+        val clean = name.trim().ifEmpty { getDefaultDeviceName() }
         prefs(context).edit().putString(KEY_ACTIVE_DEVICE, clean).apply()
         addOrMergeSlots(context, listOf(clean))
     }
 
     fun getSlots(context: Context): List<String> {
+        val active = getActiveDevice(context)
         val raw = prefs(context).getString(KEY_DEVICE_SLOTS, null)
-        val result = linkedSetOf(DEFAULT_DEVICE_NAME)
+        val result = linkedSetOf(active)
         if (!raw.isNullOrEmpty()) {
             runCatching {
                 val arr = JSONArray(raw)
@@ -39,7 +65,7 @@ object ProfileSlotPrefs {
                 }
             }
         }
-        result.add(getActiveDevice(context))
+        result.add(active)
         return result.toList()
     }
 
@@ -58,7 +84,7 @@ object ProfileSlotPrefs {
     fun removeSlot(context: Context, name: String): List<String> {
         val clean = name.trim()
         val current = getSlots(context).filterNot { it.equals(clean, ignoreCase = true) }
-        val safeList = current.ifEmpty { listOf(DEFAULT_DEVICE_NAME) }
+        val safeList = current.ifEmpty { listOf(getDefaultDeviceName()) }
         saveSlots(context, safeList)
         if (getActiveDevice(context).equals(clean, ignoreCase = true)) {
             setActiveDevice(context, safeList.first())

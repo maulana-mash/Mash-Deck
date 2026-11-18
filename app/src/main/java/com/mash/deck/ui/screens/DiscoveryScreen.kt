@@ -276,7 +276,7 @@ fun DiscoveryScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Mash Stream Deck",
+                                    text = activeProfileName,
                                     color = Color(0xFFE4E4E7),
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium

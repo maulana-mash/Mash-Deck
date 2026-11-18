@@ -68,6 +68,7 @@ class Vsd2Client(
     val discoveredDevices: StateFlow<List<String>> = _discoveredDevices.asStateFlow()
 
     private var lastHost: String? = null
+    val connectedHost: String? get() = lastHost
     private var lastPort: Int? = null
     private var lastConfig: DeckConfig? = null
 
@@ -257,9 +258,6 @@ class Vsd2Client(
                         val desired = targetDeviceName.trim().ifEmpty { "Mash Stream Deck" }
                         val matchedDevice = list.devicesList.firstOrNull { it.name.equals(desired, ignoreCase = true) }
                             ?: list.devicesList.firstOrNull { it.id == activeDeviceID }
-                            ?: if (desired.equals("Mash Stream Deck", ignoreCase = true) || desired.equals("Mash Deck", ignoreCase = true)) {
-                                list.devicesList.firstOrNull { it.name.startsWith("Mash Deck") || it.name.startsWith("Mash Stream Deck") }
-                            } else null
 
                         if (matchedDevice != null) {
                             Log.d(tag, "Found matching device on PC: ${matchedDevice.name} (id=${matchedDevice.id}). Reusing it...")

@@ -23,6 +23,7 @@ import com.mash.deck.model.DeckConfig
 import com.mash.deck.model.DeckPreset
 import com.mash.deck.network.ConnectionState
 import com.mash.deck.network.Vsd2Client
+import com.mash.deck.sensor.GyroLaserManager
 import com.mash.deck.ui.screens.*
 import com.mash.deck.ui.theme.BackgroundDark
 import com.mash.deck.ui.theme.MashDeckTheme
@@ -38,6 +39,7 @@ enum class AppScreen {
 class MainActivity : ComponentActivity() {
     private lateinit var mdnsDiscovery: MdnsDiscovery
     private lateinit var vsdClient: Vsd2Client
+    private lateinit var gyroLaserManager: GyroLaserManager
 
     private var currentScreen by mutableStateOf(AppScreen.SPLASH)
     private var connectedServerName by mutableStateOf("MASH-OLED23")
@@ -91,6 +93,7 @@ class MainActivity : ComponentActivity() {
         mdnsDiscovery = MdnsDiscovery(this, lifecycleScope)
         vsdClient = Vsd2Client(lifecycleScope, cryptoBox)
         vsdClient.targetDeviceName = activeProfileName
+        gyroLaserManager = GyroLaserManager(this, lifecycleScope)
 
         // Start dual discovery: mDNS + active TCP probe to saved server
         mdnsDiscovery.startDiscovery(
@@ -233,6 +236,12 @@ class MainActivity : ComponentActivity() {
                                 isPureFullscreen = isPureFullscreen,
                                 onKeyPress = { index, pressed ->
                                     vsdClient.sendKeyPress(index, pressed)
+                                    if (pressed) {
+                                        val host = vsdClient.connectedHost ?: savedServer?.host ?: connectingHost ?: ""
+                                        gyroLaserManager.startTracking(host)
+                                    } else {
+                                        gyroLaserManager.stopTracking()
+                                    }
                                 },
                                 onNextPage = { vsdClient.nextPage() },
                                 onPrevPage = { vsdClient.previousPage() },
@@ -550,6 +559,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        gyroLaserManager.cleanup()
         mdnsDiscovery.stopDiscovery()
         vsdClient.disconnect()
         applyKeepScreenOn(false)
